@@ -1,159 +1,197 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
 
-        <link rel="stylesheet" href="style.css">
+<head>
 
-        <meta charset="UTF-8">
-        <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>My Video App</title>
-    </head>
-    <body>
+    <link rel="stylesheet" href="style.css">
 
-        <div>
-                <h3>Your Id: <span id="myId"></span></h3>
-                <h3>Online Users (click to connect)</h3>
-                <div id="users">
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Video App</title>
+</head>
 
-                </div>
-                <video id="local-video"></video>
-                <video id="remote-video"></video>
-            </div>
-            </div>
-            <p id="status"></p>
+<body>
+
+    <div>
+        <h3>Your Id: <span id="myId"></span></h3>
+        <h3>Online Users (click to connect)</h3>
+        <div id="users">
+
         </div>
 
-        <!-- Import socket.io script -->
-        <script src="/socket.io/socket.io.js"></script>
-        <script src="../index.js"></script>
+        <section>
+            <div>
+                <form id="fileInfo">
+                    <input type="file" id="fileInput" name="files" />
+                </form>
+                <button disabled id="sendFile">Send</button>
+                <button disabled id="abortButton">Abort</button>
+            </div>
+
+            <div class="progress">
+                <div class="label">Send progress: </div>
+                <progress id="sendProgress" max="0" value="0"></progress>
+            </div>
+
+            <div class="progress">
+                <div class="label">Receive progress: </div>
+                <progress id="receiveProgress" max="0" value="0"></progress>
+            </div>
+
+            <div id="bitrate"></div>
+            <a id="download"></a>
+            <span id="status"></span>
+
+        </section>
+    </div>
+    </div>
+    <p id="status"></p>
+    </div>
+
+    <!-- Import socket.io script -->
+    <script src="/socket.io/socket.io.js"></script>
 
 
-        <script>
-            const socket = io();
+    <script>
 
-            const peer = new RTCPeerConnection({
-                iceServers: [
-                    {
-                        urls: "stun:stun.stunprotocol.org"
-                    }
-                ]
-            });
+        let localConnection;
+        let remoteConnection;
+        let sendChannel;
+        let receiveChannel;
+        let fileReader;
+        const bitrateDiv = document.querySelector("div#bitrate");
+        const fileInput = document.querySelector("input#fileInput");
+        const abortButton = document.querySelector("button#abortButton");
+        const downloadAnchor = document.querySelector("a#download");
+        const sendProgress = document.querySelector("progress#sendProgress");
+        const receiveProgress = document.querySelector("progress#receiveProgress");
+        const statusMessage = document.querySelector("span#status");
+        const sendFileButton = document.querySelector("button#sendFile");
 
-            const createCall = async (to) => {
-                const status = document.getElementById('status');
-                status.innerText = `Calling ${to}`;
+        let receiveBuffer = [];
+        let receivedSize = 0;
+        let fileSizeInfoReceived;
+        let fileNameRecieved;
 
-                const localOffer = await peer.createOffer();
-                await peer.setLocalDescription(new RTCSessionDescription(localOffer));
+        let bytesPrev = 0;
+        let timestampPrev = 0;
+        let timestampStart;
+        let statsInterval = null;
+        let bitrateMax = 0;
+        sendFileButton.addEventListener("click", () => createConnection());
+        fileInput.addEventListener("change", handleFileInputChange, false);
 
-                socket.emit('outgoing:call', { fromOffer: localOffer, to });
+        abortButton.addEventListener("click", () => {
+            if (fileReader && fileReader.readyState === 1) {
+                console.log("Abort read!");
+                fileReader.abort();
             }
+        });
+        async function handleFileInputChange() {
+            const file = fileInput.files[0];
+            if (!file) {
+                console.log("No file chosen");
+            } else {
+                sendFileButton.disabled = false;
+            }
+        }
 
-            peer.ontrack = async ({streams: [stream]}) => {
-
-                const status = document.getElementById('status');
-                status.innerText = 'Incomming Stream';
-
-                console.log(stream)
-
-                const video = document.getElementById('remote-video');
-                video.srcObject = stream;
-                video.play();
-
-                const mySteam = await navigator.mediaDevices.getUserMedia({
-                    video: true,
-                });
-
-                for (const track of mySteam.getTracks()) {
-                    peer.addTrack(track, mySteam);
+        const socket = io();
+        const peer = new RTCPeerConnection({
+            iceServers: [
+                {
+                    urls: "stun:stun.stunprotocol.org"
                 }
+            ]
+        });
 
-            }
+        const createCall = async (to) => {
+            const status = document.getElementById('status');
+            status.innerText = `Calling ${to}`;
+            console.log(to);
+            console.log(fileInput);
 
-            socket.on('users:joined', (id) => {
-                const usersDiv = document.getElementById('users');
+            const localOffer = await peer.createOffer();
+            await peer.setLocalDescription(new RTCSessionDescription(localOffer));
+            socket.emit('outgoing:call', { fromOffer: localOffer, to });
+        }
+
+        socket.on('users:joined', (id) => {
+            const usersDiv = document.getElementById('users');
+            const btn = document.createElement('button');
+            const textNode = document.createTextNode(id);
+
+            btn.id = id;
+
+            btn.setAttribute('onclick', `createCall('${id}')`);
+            btn.appendChild(textNode);
+            usersDiv.appendChild(btn);
+        });
+
+
+        socket.on('incomming:answere', async data => {
+            const status = document.getElementById('status');
+            status.innerText = 'incomming:answere';
+
+            const { offer } = data;
+            await peer.setRemoteDescription(new RTCSessionDescription(offer));
+
+        });
+
+        socket.on('user:disconnect', id => {
+            document.getElementById(id).remove()
+        })
+
+        socket.on('incomming:call', async data => {
+            const status = document.getElementById('status');
+            status.innerText = 'incomming:call';
+
+            const { from, offer } = data;
+
+            await peer.setRemoteDescription(new RTCSessionDescription(offer));
+
+            const answereOffer = await peer.createAnswer();
+            await peer.setLocalDescription(new RTCSessionDescription(answereOffer));
+
+            socket.emit('call:accepted', { answere: answereOffer, to: from });
+            // const mySteam = await navigator.mediaDevices.getUserMedia({
+            //     video: true,
+            // });
+
+            // for (const track of mySteam.getTracks()) {
+            //     peer.addTrack(track, mySteam);
+            // }
+        })
+
+        const getAndUpdateUsers = async () => {
+            const usersDiv = document.getElementById('users');
+            usersDiv.innerHTML = ''
+
+            const response = await fetch('/users', { method: 'GET' });
+            const jsonResponse = await response.json();
+
+            console.log(jsonResponse)
+
+            jsonResponse.forEach(user => {
                 const btn = document.createElement('button');
-                const textNode = document.createTextNode(id);
+                const textNode = document.createTextNode(user[0]);
 
-                btn.id = id;
+                btn.id = user[0];
 
-                btn.setAttribute('onclick', `createCall('${id}')`);
+                btn.setAttribute('onclick', `createCall('${user[0]}')`);
                 btn.appendChild(textNode);
                 usersDiv.appendChild(btn);
             });
+        }
+
+        socket.on('hello', ({ id }) => document.getElementById('myId').innerText = id)
 
 
-            socket.on('incomming:answere', async data => {
-                const status = document.getElementById('status');
-                status.innerText = 'incomming:answere';
+        // yeni kullanıcı eklendiğinde sayfada kullanıcı id gösterir.
+        window.addEventListener('load', getAndUpdateUsers);
+        // window.addEventListener('load', getUserMedia);
+    </script>
+</body>
 
-                const { offer } = data;
-                await peer.setRemoteDescription(new RTCSessionDescription(offer));
-            });
-
-            socket.on('user:disconnect', id => {
-                document.getElementById(id).remove()
-            })
-
-            socket.on('incomming:call', async data => {
-                const status = document.getElementById('status');
-                status.innerText = 'incomming:call';
-
-                const { from, offer } = data;
-
-                await peer.setRemoteDescription(new RTCSessionDescription(offer));
-
-                const answereOffer = await peer.createAnswer();
-                await peer.setLocalDescription(new RTCSessionDescription(answereOffer));
-
-                socket.emit('call:accepted', { answere: answereOffer, to: from });
-                const mySteam = await navigator.mediaDevices.getUserMedia({
-                    video: true,
-                });
-
-                for (const track of mySteam.getTracks()) {
-                    peer.addTrack(track, mySteam);
-                }
-            })
-
-            const getAndUpdateUsers = async () => {
-                const usersDiv = document.getElementById('users');
-                usersDiv.innerHTML = ''
-
-                const response = await fetch('/users', { method: 'GET' });
-                const jsonResponse = await response.json();
-
-                console.log(jsonResponse)
-
-                jsonResponse.forEach(user => {
-                    const btn = document.createElement('button');
-                    const textNode = document.createTextNode(user[0]);
-
-                    btn.id = user[0];
-
-                    btn.setAttribute('onclick', `createCall('${user[0]}')`);
-                    btn.appendChild(textNode);
-                    usersDiv.appendChild(btn);
-                });
-            }
-
-            socket.on('hello', ({ id }) => document.getElementById('myId').innerText = id)
-
-
-            const getUserMedia = async () => {
-                const userMedia = await navigator.mediaDevices.getUserMedia({
-                    video: true,
-                });
-
-                const videoEle = document.getElementById('local-video');
-                videoEle.srcObject = userMedia;
-                videoEle.play()
-            }
-
-
-            window.addEventListener('load', getAndUpdateUsers);
-            window.addEventListener('load', getUserMedia);
-        </script>
-    </body>
 </html>
