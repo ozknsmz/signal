@@ -79,7 +79,7 @@
         let timestampStart;
         let statsInterval = null;
         let bitrateMax = 0;
-        sendFileButton.addEventListener("click", () => createConnection());
+        sendFileButton.addEventListener("click", () => createCall());
         fileInput.addEventListener("change", handleFileInputChange, false);
 
         abortButton.addEventListener("click", () => {
@@ -110,12 +110,22 @@
             const status = document.getElementById('status');
             status.innerText = `Calling ${to}`;
             console.log(to);
-            console.log(fileInput);
+            console.log(fileInput.files);
 
             const localOffer = await peer.createOffer();
             await peer.setLocalDescription(new RTCSessionDescription(localOffer));
+            sendChannel = peer.createDataChannel("sendDataChannel");
+            sendChannel.binaryType = "arraybuffer";
+
+            sendChannel.addEventListener("open", onSendChannelStateChange);
+            console.log("Connection OPENED!");
+            sendChannel.addEventListener("close", onSendChannelStateChange);
+            sendChannel.addEventListener("error", onError);
+
             socket.emit('outgoing:call', { fromOffer: localOffer, to });
         }
+
+
 
         socket.on('users:joined', (id) => {
             const usersDiv = document.getElementById('users');
@@ -150,19 +160,32 @@
             const { from, offer } = data;
 
             await peer.setRemoteDescription(new RTCSessionDescription(offer));
-
             const answereOffer = await peer.createAnswer();
             await peer.setLocalDescription(new RTCSessionDescription(answereOffer));
+            await peer.addEventListener("datachannel", receiveChannelCallback);
 
             socket.emit('call:accepted', { answere: answereOffer, to: from });
-            // const mySteam = await navigator.mediaDevices.getUserMedia({
-            //     video: true,
-            // });
-
-            // for (const track of mySteam.getTracks()) {
-            //     peer.addTrack(track, mySteam);
-            // }
         })
+
+        function receiveChannelCallback(event) {
+            console.log("Receive Channel Callback");
+            receiveChannel = event.channel;
+            receiveChannel.binaryType = "arraybuffer";
+            receiveChannel.onmessage = onReceiveMessageCallback;
+            receiveChannel.onopen = onReceiveChannelStateChange;
+            receiveChannel.onclose = onReceiveChannelStateChange;
+            console.log("Connection OPENED!");
+
+            receivedSize = 0;
+            bitrateMax = 0;
+            downloadAnchor.textContent = "";
+            downloadAnchor.removeAttribute("download");
+            console.log(downloadAnchor.href);
+            if (downloadAnchor.href) {
+                URL.revokeObjectURL(downloadAnchor.href);
+                downloadAnchor.removeAttribute("href");
+            }
+        }
 
         const getAndUpdateUsers = async () => {
             const usersDiv = document.getElementById('users');
@@ -191,6 +214,153 @@
         // yeni kullanıcı eklendiğinde sayfada kullanıcı id gösterir.
         window.addEventListener('load', getAndUpdateUsers);
         // window.addEventListener('load', getUserMedia);
+
+        function onSendChannelStateChange() {
+            if (sendChannel) {
+                const { readyState } = sendChannel;
+                console.log(`Send channel state is: ${readyState}`);
+                if (readyState === "open") {
+                    sendData();
+                }
+            }
+        }
+
+        function onError(error) {
+            if (sendChannel) {
+                console.error("Error in sendChannel:", error);
+                return;
+            }
+            console.log("Error in sendChannel which is already closed:", error);
+        }
+
+        function sendData() {
+            const file = fileInput.files[0];
+            console.log(file)
+
+            console.log(
+                `File is ${[file.name, file.size, file.type, file.lastModified].join(" ")}`
+            );
+
+            // Handle 0 size files.
+            statusMessage.textContent = "";
+            downloadAnchor.textContent = "";
+
+            sendProgress.max = file.size;
+            receiveProgress.max = file.size;
+            const chunkSize = 16384;
+            fileReader = new FileReader();
+            let offset = 0;
+            fileReader.addEventListener("error", (error) =>
+                console.error("Error reading file:", error)
+            );
+            fileReader.addEventListener("abort", (event) =>
+                console.log("File reading aborted:", event)
+            );
+            fileReader.addEventListener("load", (e) => {
+                console.log("FileRead.onload ", e);
+                sendChannel.send(e.target.result);
+                offset += e.target.result.byteLength;
+                sendProgress.value = offset;
+                if (offset < file.size) {
+                    readSlice(offset);
+                }
+            });
+            const readSlice = (o) => {
+                console.log("readSlice ", o);
+                const slice = file.slice(offset, o + chunkSize);
+                fileReader.readAsArrayBuffer(slice);
+            };
+            readSlice(0);
+        }
+
+
+        function onReceiveMessageCallback(event) {
+            console.log(event.data)
+            console.log(`Received Message ${event.data.byteLength}`);
+            receiveBuffer.push(event.data);
+            receivedSize += event.data.byteLength;
+            receiveProgress.value = receivedSize;
+
+            console.log(receivedSize);
+            console.log(fileSizeInfoReceived);
+
+            if (receivedSize === fileSizeInfoReceived) {
+                console.log("here");
+                const received = new Blob(receiveBuffer);
+                receiveBuffer = [];
+
+                downloadAnchor.href = URL.createObjectURL(received);
+                downloadAnchor.download = fileSizeInfoReceived;
+                downloadAnchor.textContent = `Click to download '${fileNameRecieved}' (${fileSizeInfoReceived} bytes)`;
+                downloadAnchor.style.display = "block";
+
+                const bitrate = Math.round(
+                    (receivedSize * 8) / (new Date().getTime() - timestampStart)
+                );
+                bitrateDiv.innerHTML = `<strong>Average Bitrate:</strong> ${bitrate} kbits/sec (max: ${bitrateMax} kbits/sec)`;
+
+                if (statsInterval) {
+                    clearInterval(statsInterval);
+                    statsInterval = null;
+                }
+
+                closeDataChannels();
+            }
+        }
+        function onSendChannelStateChange() {
+            if (sendChannel) {
+                const { readyState } = sendChannel;
+                console.log(`Send channel state is: ${readyState}`);
+                if (readyState === "open") {
+                    sendData();
+                }
+            }
+        }
+
+        async function onReceiveChannelStateChange() {
+            if (receiveChannel) {
+                const readyState = receiveChannel.readyState;
+                console.log(`Receive channel state is: ${readyState}`);
+                if (readyState === "open") {
+                    timestampStart = new Date().getTime();
+                    timestampPrev = timestampStart;
+                    statsInterval = setInterval(displayStats, 500);
+                    await displayStats();
+                }
+            }
+        }
+
+        async function displayStats() {
+            if (remoteConnection && remoteConnection.iceConnectionState === "connected") {
+                const stats = await remoteConnection.getStats();
+                let activeCandidatePair;
+                stats.forEach((report) => {
+                    if (report.type === "transport") {
+                        activeCandidatePair = stats.get(report.selectedCandidatePairId);
+                    }
+                });
+                if (activeCandidatePair) {
+                    if (timestampPrev === activeCandidatePair.timestamp) {
+                        return;
+                    }
+                    // calculate current bitrate
+                    const bytesNow = activeCandidatePair.bytesReceived;
+                    const bitrate = Math.round(
+                        ((bytesNow - bytesPrev) * 8) /
+                        (activeCandidatePair.timestamp - timestampPrev)
+                    );
+                    bitrateDiv.innerHTML = `<strong>Current Bitrate:</strong> ${bitrate} kbits/sec`;
+                    timestampPrev = activeCandidatePair.timestamp;
+                    bytesPrev = bytesNow;
+                    if (bitrate > bitrateMax) {
+                        bitrateMax = bitrate;
+                    }
+                }
+            }
+        }
+
+
+
     </script>
 </body>
 
