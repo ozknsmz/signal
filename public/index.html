@@ -69,17 +69,18 @@
         const statusMessage = document.querySelector("span#status");
         const sendFileButton = document.querySelector("button#sendFile");
 
+        let getFile;
         let receiveBuffer = [];
         let receivedSize = 0;
         let fileSizeInfoReceived;
         let fileNameRecieved;
-
+        let toID;
         let bytesPrev = 0;
         let timestampPrev = 0;
         let timestampStart;
         let statsInterval = null;
         let bitrateMax = 0;
-        sendFileButton.addEventListener("click", () => createCall());
+        // sendFileButton.addEventListener("click", () => createCall());
         fileInput.addEventListener("change", handleFileInputChange, false);
 
         abortButton.addEventListener("click", () => {
@@ -89,8 +90,8 @@
             }
         });
         async function handleFileInputChange() {
-            const file = fileInput.files[0];
-            if (!file) {
+            getFile = fileInput.files[0];
+            if (!getFile) {
                 console.log("No file chosen");
             } else {
                 sendFileButton.disabled = false;
@@ -98,6 +99,7 @@
         }
 
         const socket = io();
+
         const peer = new RTCPeerConnection({
             iceServers: [
                 {
@@ -110,22 +112,30 @@
             const status = document.getElementById('status');
             status.innerText = `Calling ${to}`;
             console.log(to);
-            console.log(fileInput.files);
+            // console.log(fileInput.files[0]);
 
-            const localOffer = await peer.createOffer();
-            await peer.setLocalDescription(new RTCSessionDescription(localOffer));
+            // fileSizeInfoReceived = fileInput.files[0].size;
             sendChannel = peer.createDataChannel("sendDataChannel");
             sendChannel.binaryType = "arraybuffer";
 
             sendChannel.addEventListener("open", onSendChannelStateChange);
-            console.log("Connection OPENED!");
             sendChannel.addEventListener("close", onSendChannelStateChange);
             sendChannel.addEventListener("error", onError);
 
-            socket.emit('outgoing:call', { fromOffer: localOffer, to });
+            peer.onicecandidate = (e) => {
+                console.log("Created offer");
+            };
+
+            peer
+                .createOffer()
+                .then(async (offer) => {
+                    return peer.setLocalDescription(offer);
+                })
+                .then(function () {
+                    var localOffer = peer.localDescription;
+                    socket.emit('outgoing:call', { fromOffer: localOffer, to });
+                });
         }
-
-
 
         socket.on('users:joined', (id) => {
             const usersDiv = document.getElementById('users');
@@ -139,12 +149,12 @@
             usersDiv.appendChild(btn);
         });
 
-
         socket.on('incomming:answere', async data => {
             const status = document.getElementById('status');
             status.innerText = 'incomming:answere';
 
             const { offer } = data;
+            console.log(offer);
             await peer.setRemoteDescription(new RTCSessionDescription(offer));
 
         });
@@ -201,10 +211,11 @@
                 const textNode = document.createTextNode(user[0]);
 
                 btn.id = user[0];
-
                 btn.setAttribute('onclick', `createCall('${user[0]}')`);
                 btn.appendChild(textNode);
                 usersDiv.appendChild(btn);
+                console.log(btn)
+
             });
         }
 
@@ -258,6 +269,7 @@
             );
             fileReader.addEventListener("load", (e) => {
                 console.log("FileRead.onload ", e);
+                // console.log(fileInput.files[0]);
                 sendChannel.send(e.target.result);
                 offset += e.target.result.byteLength;
                 sendProgress.value = offset;
@@ -282,7 +294,6 @@
             receiveProgress.value = receivedSize;
 
             console.log(receivedSize);
-            console.log(fileSizeInfoReceived);
 
             if (receivedSize === fileSizeInfoReceived) {
                 console.log("here");
