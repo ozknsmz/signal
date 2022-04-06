@@ -80,6 +80,7 @@
         let timestampStart;
         let statsInterval = null;
         let bitrateMax = 0;
+        let file;
         // sendFileButton.addEventListener("click", () => createCall());
         fileInput.addEventListener("change", handleFileInputChange, false);
 
@@ -112,7 +113,7 @@
             const status = document.getElementById('status');
             status.innerText = `Calling ${to}`;
             console.log(to);
-            // console.log(fileInput.files[0]);
+            // console.log(fileInput.files[0].size);
 
             // fileSizeInfoReceived = fileInput.files[0].size;
             sendChannel = peer.createDataChannel("sendDataChannel");
@@ -150,11 +151,13 @@
         });
 
         socket.on('incomming:answere', async data => {
+            console.log(data); // remote id and answer
             const status = document.getElementById('status');
             status.innerText = 'incomming:answere';
 
             const { offer } = data;
             console.log(offer);
+            console.log("Connection Opened!");
             await peer.setRemoteDescription(new RTCSessionDescription(offer));
 
         });
@@ -164,16 +167,20 @@
         })
 
         socket.on('incomming:call', async data => {
+            console.log(data);
             const status = document.getElementById('status');
             status.innerText = 'incomming:call';
 
             const { from, offer } = data;
 
-            await peer.setRemoteDescription(new RTCSessionDescription(offer));
-            const answereOffer = await peer.createAnswer();
-            await peer.setLocalDescription(new RTCSessionDescription(answereOffer));
             await peer.addEventListener("datachannel", receiveChannelCallback);
+            await peer.setRemoteDescription(new RTCSessionDescription(offer));
 
+            const answereOffer = await peer.createAnswer();
+            console.log(answereOffer);
+            console.log(peer);
+            await peer.setLocalDescription(new RTCSessionDescription(answereOffer));
+            console.log(from);  // local peer
             socket.emit('call:accepted', { answere: answereOffer, to: from });
         })
 
@@ -181,6 +188,7 @@
             console.log("Receive Channel Callback");
             receiveChannel = event.channel;
             receiveChannel.binaryType = "arraybuffer";
+            console.log(event);
             receiveChannel.onmessage = onReceiveMessageCallback;
             receiveChannel.onopen = onReceiveChannelStateChange;
             receiveChannel.onclose = onReceiveChannelStateChange;
@@ -224,7 +232,6 @@
 
         // yeni kullanıcı eklendiğinde sayfada kullanıcı id gösterir.
         window.addEventListener('load', getAndUpdateUsers);
-        // window.addEventListener('load', getUserMedia);
 
         function onSendChannelStateChange() {
             if (sendChannel) {
@@ -243,14 +250,30 @@
             }
             console.log("Error in sendChannel which is already closed:", error);
         }
+        async function sendMetaData(file) {
+            let fileSize = file.size
+            console.log(fileSize);
+            let fileName = file.name
+            let fileType = file.type
+            let metaObj = {
+                fileName: fileName,
+                fileSize: fileSize,
+                fileType: fileType
+            }
+            console.log(metaObj);
+            sendChannel.send(JSON.stringify(metaObj))
+        }
 
-        function sendData() {
-            const file = fileInput.files[0];
+        async function sendData() {
+
+            file = fileInput.files[0];
+            await sendMetaData(file)
             console.log(file)
 
             console.log(
                 `File is ${[file.name, file.size, file.type, file.lastModified].join(" ")}`
             );
+
 
             // Handle 0 size files.
             statusMessage.textContent = "";
@@ -288,12 +311,19 @@
 
         function onReceiveMessageCallback(event) {
             console.log(event.data)
+            let meta = JSON.parse(event.data)
+            console.log(meta);
+            if (!!meta.fileSize) {
+                fileSizeInfoReceived = meta.fileSize;
+                return fileSizeInfoReceived;
+            }
             console.log(`Received Message ${event.data.byteLength}`);
             receiveBuffer.push(event.data);
             receivedSize += event.data.byteLength;
             receiveProgress.value = receivedSize;
 
             console.log(receivedSize);
+            console.log(fileSizeInfoReceived);
 
             if (receivedSize === fileSizeInfoReceived) {
                 console.log("here");
