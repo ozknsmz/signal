@@ -101,39 +101,60 @@
 
         const socket = io();
 
-        const peer = new RTCPeerConnection({
-            iceServers: [
-                {
-                    urls: "stun:stun.stunprotocol.org"
-                }
-            ]
-        });
+        // const peer = new RTCPeerConnection({
+        //     iceServers: [
+        //         {
+        //             urls: "stun:stun.stunprotocol.org"
+        //         }
+        //     ]
+        // });
 
         const createCall = async (to) => {
             const status = document.getElementById('status');
             status.innerText = `Calling ${to}`;
             console.log(to);
             // console.log(fileInput.files[0].size);
-
             // fileSizeInfoReceived = fileInput.files[0].size;
-            sendChannel = peer.createDataChannel("sendDataChannel");
+            localConnection = new RTCPeerConnection();
+            sendChannel = localConnection.createDataChannel("sendDataChannel");
             sendChannel.binaryType = "arraybuffer";
 
             sendChannel.addEventListener("open", onSendChannelStateChange);
+            console.log("Connection OPENED!");
             sendChannel.addEventListener("close", onSendChannelStateChange);
             sendChannel.addEventListener("error", onError);
 
-            peer.onicecandidate = (e) => {
-                console.log("Created offer");
-            };
+            // peer.onicecandidate = (e) => {
+            //     console.log("Created offer");
+            // };
 
-            peer
+            localConnection
                 .createOffer()
                 .then(async (offer) => {
-                    return peer.setLocalDescription(offer);
+                    return localConnection.setLocalDescription(offer);
+                }).then(function () {
+                    return new Promise(function (resolve) {
+                        if (localConnection.iceGatheringState === "complete") {
+                            resolve();
+                        } else {
+                            function checkState() {
+                                if (localConnection.iceGatheringState === "complete") {
+                                    localConnection.removeEventListener(
+                                        "icegatheringstatechange",
+                                        checkState
+                                    );
+                                    resolve();
+                                }
+                            }
+                            localConnection.addEventListener(
+                                "icegatheringstatechange",
+                                checkState
+                            );
+                        }
+                    });
                 })
                 .then(function () {
-                    var localOffer = peer.localDescription;
+                    var localOffer = localConnection.localDescription;
                     socket.emit('outgoing:call', { fromOffer: localOffer, to });
                 });
         }
@@ -158,7 +179,7 @@
             const { offer } = data;
             console.log(offer);
             console.log("Connection Opened!");
-            await peer.setRemoteDescription(new RTCSessionDescription(offer));
+            await localConnection.setRemoteDescription({ type: "answer", sdp: offer.sdp });
 
         });
 
@@ -170,16 +191,16 @@
             console.log(data);
             const status = document.getElementById('status');
             status.innerText = 'incomming:call';
-
             const { from, offer } = data;
 
-            await peer.addEventListener("datachannel", receiveChannelCallback);
-            await peer.setRemoteDescription(new RTCSessionDescription(offer));
+            remoteConnection = new RTCPeerConnection();
+            remoteConnection.addEventListener("datachannel", receiveChannelCallback);
+            await remoteConnection.setRemoteDescription(offer);
 
-            const answereOffer = await peer.createAnswer();
+            const answereOffer = await remoteConnection.createAnswer();
             console.log(answereOffer);
-            console.log(peer);
-            await peer.setLocalDescription(new RTCSessionDescription(answereOffer));
+            console.log(remoteConnection);
+            await remoteConnection.setLocalDescription(answereOffer);
             console.log(from);  // local peer
             socket.emit('call:accepted', { answere: answereOffer, to: from });
         })
@@ -310,7 +331,7 @@
 
 
         function onReceiveMessageCallback(event) {
-            console.log(event.data)
+            console.log(event)
             let meta = JSON.parse(event.data)
             console.log(meta);
             if (!!meta.fileSize) {
