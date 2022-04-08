@@ -54,7 +54,7 @@
 
 
     <script>
-
+        let userCounts = {}
         let localConnection;
         let remoteConnection;
         let sendChannel;
@@ -81,6 +81,14 @@
         let statsInterval = null;
         let bitrateMax = 0;
         let file;
+        sendFileButton.onclick = async () => {
+
+
+startTextingButton.disabled = true
+leaveChatButton.disabled = false
+
+signalingChannel.postMessage({ type: 'ready' });
+}
         // sendFileButton.addEventListener("click", () => createCall());
         fileInput.addEventListener("change", handleFileInputChange, false);
 
@@ -110,6 +118,9 @@
         // });
 
         const createCall = async (to) => {
+            console.log(userCounts);
+            console.log(userCounts[`${to}`]);
+            userCounts[`${to}`]? sendData(): console.log("Connection Not Yet Established. First time seeing this ID")
             const status = document.getElementById('status');
             status.innerText = `Calling ${to}`;
             console.log(to);
@@ -159,7 +170,23 @@
                 });
         }
 
+        function getKeyByValue(object, value) {
+  return Object.keys(object).find(key => object[key] === value);
+}
+
         socket.on('users:joined', (id) => {
+            console.log(userCounts);
+            console.log(userCounts[`${id}`]);
+            let idEncountered = getKeyByValue(userCounts, id)
+            idEncountered == 0? idEncountered = '0': idEncountered ;
+            if(!!idEncountered){
+                userCounts[`${id}`] += 1;
+            }else {
+                userCounts[`${id}`]= 0
+            }
+            console.log('\n');
+            console.log(userCounts);
+            console.log(userCounts[`${id}`]);
             const usersDiv = document.getElementById('users');
             const btn = document.createElement('button');
             const textNode = document.createTextNode(id);
@@ -332,11 +359,17 @@
 
         function onReceiveMessageCallback(event) {
             console.log(event)
+            if(typeof event.data === "string") {
+                if(event.data.includes("fileSize")){
             let meta = JSON.parse(event.data)
             console.log(meta);
             if (!!meta.fileSize) {
+                console.log("resetting filesize");
                 fileSizeInfoReceived = meta.fileSize;
-                return fileSizeInfoReceived;
+                fileNameRecieved = meta.fileName;
+                fileTYpeReceived = meta.fileType;
+                return;
+            }}
             }
             console.log(`Received Message ${event.data.byteLength}`);
             receiveBuffer.push(event.data);
@@ -352,7 +385,7 @@
                 receiveBuffer = [];
 
                 downloadAnchor.href = URL.createObjectURL(received);
-                downloadAnchor.download = fileSizeInfoReceived;
+                downloadAnchor.download = fileNameRecieved;
                 downloadAnchor.textContent = `Click to download '${fileNameRecieved}' (${fileSizeInfoReceived} bytes)`;
                 downloadAnchor.style.display = "block";
 
