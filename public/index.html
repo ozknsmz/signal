@@ -25,8 +25,8 @@
                 <form id="fileInfo">
                     <input type="file" id="fileInput" name="files" />
                 </form>
-                <button disabled id="sendFile">Send</button>
-                <button disabled id="abortButton">Abort</button>
+                <!-- <button disabled id="sendFile">Send</button>
+                <button disabled id="abortButton">Abort</button> -->
             </div>
 
             <div class="progress">
@@ -81,23 +81,9 @@
         let statsInterval = null;
         let bitrateMax = 0;
         let file;
-        sendFileButton.onclick = async () => {
 
-
-startTextingButton.disabled = true
-leaveChatButton.disabled = false
-
-signalingChannel.postMessage({ type: 'ready' });
-}
-        // sendFileButton.addEventListener("click", () => createCall());
         fileInput.addEventListener("change", handleFileInputChange, false);
 
-        abortButton.addEventListener("click", () => {
-            if (fileReader && fileReader.readyState === 1) {
-                console.log("Abort read!");
-                fileReader.abort();
-            }
-        });
         async function handleFileInputChange() {
             getFile = fileInput.files[0];
             if (!getFile) {
@@ -109,23 +95,13 @@ signalingChannel.postMessage({ type: 'ready' });
 
         const socket = io();
 
-        // const peer = new RTCPeerConnection({
-        //     iceServers: [
-        //         {
-        //             urls: "stun:stun.stunprotocol.org"
-        //         }
-        //     ]
-        // });
-
         const createCall = async (to) => {
             console.log(userCounts);
             console.log(userCounts[`${to}`]);
-            userCounts[`${to}`]? sendData(): console.log("Connection Not Yet Established. First time seeing this ID")
+            userCounts[`${to}`] ? sendData() : console.log("Connection Not Yet Established. First time seeing this ID")
             const status = document.getElementById('status');
             status.innerText = `Calling ${to}`;
-            console.log(to);
-            // console.log(fileInput.files[0].size);
-            // fileSizeInfoReceived = fileInput.files[0].size;
+
             localConnection = new RTCPeerConnection();
             sendChannel = localConnection.createDataChannel("sendDataChannel");
             sendChannel.binaryType = "arraybuffer";
@@ -171,18 +147,18 @@ signalingChannel.postMessage({ type: 'ready' });
         }
 
         function getKeyByValue(object, value) {
-  return Object.keys(object).find(key => object[key] === value);
-}
+            return Object.keys(object).find(key => object[key] === value);
+        }
 
         socket.on('users:joined', (id) => {
             console.log(userCounts);
             console.log(userCounts[`${id}`]);
             let idEncountered = getKeyByValue(userCounts, id)
-            idEncountered == 0? idEncountered = '0': idEncountered ;
-            if(!!idEncountered){
+            idEncountered == 0 ? idEncountered = '0' : idEncountered;
+            if (!!idEncountered) {
                 userCounts[`${id}`] += 1;
-            }else {
-                userCounts[`${id}`]= 0
+            } else {
+                userCounts[`${id}`] = 0
             }
             console.log('\n');
             console.log(userCounts);
@@ -359,17 +335,18 @@ signalingChannel.postMessage({ type: 'ready' });
 
         function onReceiveMessageCallback(event) {
             console.log(event)
-            if(typeof event.data === "string") {
-                if(event.data.includes("fileSize")){
-            let meta = JSON.parse(event.data)
-            console.log(meta);
-            if (!!meta.fileSize) {
-                console.log("resetting filesize");
-                fileSizeInfoReceived = meta.fileSize;
-                fileNameRecieved = meta.fileName;
-                fileTYpeReceived = meta.fileType;
-                return;
-            }}
+            if (typeof event.data === "string") {
+                if (event.data.includes("fileSize")) {
+                    let meta = JSON.parse(event.data)
+                    console.log(meta);
+                    if (!!meta.fileSize) {
+                        console.log("resetting filesize");
+                        fileSizeInfoReceived = meta.fileSize;
+                        fileNameRecieved = meta.fileName;
+                        fileTYpeReceived = meta.fileType;
+                        return;
+                    }
+                }
             }
             console.log(`Received Message ${event.data.byteLength}`);
             receiveBuffer.push(event.data);
